@@ -33,9 +33,9 @@ fn oscillate(hertz: f64, current_time: f64, osc_type: i32) -> f64 {
 
 fn make_noise(current_time: f64) -> f64 {
     //let output: f64 = 
-    println!("Making noise!!");
-    //return 0.5 * f64::sin(440.0 * 2 as f64 * PI * current_time);
-    return 0.1;
+    //println!("Making noise!!");
+    return 0.5 * f64::sin(440.0 * 2 as f64 * PI * current_time);
+    //return 0.1;
 }
 
 static mut frequency_output: f64 = 0.0;

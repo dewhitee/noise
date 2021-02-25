@@ -219,15 +219,18 @@ pub mod noise {
             println!("Time step = {}, Max sample = {}, Dmax sample = {}", time_step, max_sample, dmax_sample);
             while self.ready.load(Ordering::Relaxed) {
                 // Wait for block to become available
-                if self.block_free.load(Ordering::SeqCst) == 0 {}
+                if self.block_free.load(Ordering::SeqCst) == 0 {
+                    Mutex::new(&self.mux_block_not_zero);
+                }
 
                 // Block is here, so use it
+                // todo: fix thread '<unnamed>' panicked at 'attempt to subtract with overflow', src\noise.rs:227:17
                 *self.block_free.get_mut() -= 1;
 
                 // Prepare block for processing
                 if self.wave_headers[self.block_current as usize].dwFlags & 0x00000002 != 0
                 {
-                    println!("Waving out unprepared header");
+                    //println!("Waving out unprepared header");
                     unsafe {
                         mmeapi::waveOutUnprepareHeader(
                             self.hw_device,
@@ -239,34 +242,34 @@ pub mod noise {
 
                 let mut new_sample;
                 let current_block: u32 = self.block_current * self.block_samples;
-                println!("Current block = {}", current_block);
+                //println!("Current block = {}", current_block);
 
                 for n in 0 .. self.block_samples {
                     println!("{}-th block sample", n);
                     // User process
                     if self.user_function.load(Ordering::SeqCst) == ptr::null_mut() {
-                        println!("Running user PROCESS");
+                        //println!("Running user PROCESS");
                         new_sample = (self.clip(self.user_process(self.global_time), 1.0) * dmax_sample) as u16;
                     } else {
                         unsafe {
                             //println!("Running user FUNCTION | address = {}", (*self.user_function) as u32);
                             //new_sample = (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
-                            println!("Running user FUNCTION | address = {}", (*self.user_function.load(Ordering::SeqCst)) as u32);
+                            //println!("Running user FUNCTION | address = {}", (*self.user_function.load(Ordering::SeqCst)) as u32);
                             let f = *self.user_function.load(Ordering::SeqCst);
                             new_sample = (self.clip((f)(self.global_time), 1.0) * dmax_sample) as u16;
                         }
                     }
 
-                    println!("block memory len = {}, current block = {}, n = {}, new_sample = {}", self.block_memory.len(), current_block, n, new_sample);
+                    //println!("block memory len = {}, current block = {}, n = {}, new_sample = {}", self.block_memory.len(), current_block, n, new_sample);
                     self.block_memory[(current_block + n) as usize] = new_sample as i16;
                     previous_sample = new_sample;
 
                     self.global_time += time_step;
-                    println!("global_time is {} at n = {}", self.global_time, n);
+                    //println!("global_time is {} at n = {}", self.global_time, n);
                 }
 
                 // Send block to sound devices
-                println!("Sending block to sound devices");
+                //println!("Sending block to sound devices");
                 unsafe {
                     mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                     mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
@@ -332,7 +335,7 @@ pub mod noise {
         }
 
         pub fn clip(&self, sample: f64, max: f64) -> f64 {
-            println!("clip sample = {}, max = {}", sample, max);
+            //println!("clip sample = {}, max = {}", sample, max);
             return if sample >= 0.0 {
                 min_clip(sample, max)
             } else {
