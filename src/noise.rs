@@ -8,7 +8,7 @@ pub mod noise {
 
     use std::mem;
     use std::ptr;
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicPtr, Ordering};
     use std::sync::Mutex;
     use std::sync::Arc;
     use std::thread;
@@ -159,9 +159,14 @@ pub mod noise {
             //let cloned = Mutex::new(self);
             //let cloned = Arc::new(cloned);
 
+            let atomic_ptr = AtomicPtr::new(self);
+
             //let thread_arc = cloned.clone();
             //? Starting thread
-            //let a = thread::spawn(|| {});
+            self.thread = thread::spawn(move || {
+                let noise = atomic_ptr.load(Ordering::Relaxed);
+                (*noise).main_thread();
+            });
             
 
             //self.thread = thread::spawn(|| Self::main_thread(&mut self));
