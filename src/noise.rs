@@ -10,8 +10,10 @@ pub mod noise {
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Mutex;
+    use std::sync::Arc;
     use std::thread;
     use std::vec::Vec;
+    use std::clone::Clone;
 
     use winapi::shared::minwindef;
     use winapi::shared::mmreg;
@@ -21,7 +23,7 @@ pub mod noise {
     use winapi::um::mmeapi;
     use winapi::um::mmsystem;
 
-    pub const PI: f64 = 2.0 * f64::acos(0.0);
+    use std::f64::consts::PI;
 
     pub struct NoiseArgs {
         pub sample_rate: u32,
@@ -99,12 +101,12 @@ pub mod noise {
             return obj;
         }
 
-        fn create(&self, output_device: String) -> bool {
+        unsafe fn create(&mut self, output_device: String) -> bool {
             //self.thread = thread::spawn(self.main_thread);
-            let mut devices: Vec<String> = Vec::new();
+            let devices: Vec<String> = Vec::new();
             let mut devices_iter = devices.iter();
 
-            let find_res = devices_iter.position(|&x| x == output_device);
+            let find_res = devices_iter.position(|x| x.eq(&output_device));
             if devices_iter.count() != 0 {
 
                 // Device is available
@@ -113,7 +115,7 @@ pub mod noise {
                     None => 0,
                 };
 
-                let wave_format: mmreg::WAVEFORMATEX;
+                let mut wave_format: mmreg::WAVEFORMATEX = mem::zeroed::<mmreg::WAVEFORMATEX>();
                 wave_format.wFormatTag = mmreg::WAVE_FORMAT_PCM;
                 wave_format.nSamplesPerSec = self.sample_rate;
                 wave_format.wBitsPerSample = (mem::size_of::<u16>() * 8) as u16;
@@ -152,12 +154,22 @@ pub mod noise {
 
             *self.ready.get_mut() = true;
 
-            self.thread = thread::spawn(|| {
-                self.main_thread();
-            });
+            //? Clone self and wrap into the mutex
+            //let cloned = self.clone();
+            //let cloned = Mutex::new(self);
+            //let cloned = Arc::new(cloned);
 
-            // Start
-            let mutex = Mutex::new(self.mux_block_not_zero);
+            //let thread_arc = cloned.clone();
+            //? Starting thread
+            //let a = thread::spawn(|| {});
+            
+
+            //self.thread = thread::spawn(|| Self::main_thread(&mut self));
+
+            //self.thread = thread::spawn(|| )
+
+            //? Start
+            Mutex::new(&self.mux_block_not_zero);
             self.condition_variable.touch(condition_variable::Notify::One);
 
             return true;
@@ -167,7 +179,7 @@ pub mod noise {
             return false;
         }
 
-        fn stop(&mut self) {
+        fn stop(mut self) {
             *self.ready.get_mut() = false;
             self.thread.join().unwrap();
         }
@@ -176,14 +188,14 @@ pub mod noise {
             return self.global_time;
         }
 
-        pub fn main_thread(&mut self) {
+        pub unsafe fn main_thread(&mut self) -> () {
             self.global_time = 0.0;
             let time_step: f64 = 1.0 / self.sample_rate as f64;
 
             let max_sample: i32 = pow(2, (std::mem::size_of::<u16>() * 8) - 1) - 1;
 
             let dmax_sample: f64 = max_sample as f64;
-            let previous_sample = 0;
+            let mut previous_sample = 0;
 
             while self.ready.load(Ordering::Relaxed) {
                 // Wait for block to become available
@@ -202,27 +214,35 @@ pub mod noise {
                     );
                 }
 
-                let new_sample = 0;
+                let mut new_sample = 0;
                 let current_block: u32 = self.block_current * self.block_samples;
 
-                for n in 0..self.block_samples {
+                for n in 0 .. self.block_samples {
+                    
+                    // User process
                     if self.user_function == ptr::null_mut() {
                         new_sample = (self.clip(self.user_process(self.global_time), 1.0) * dmax_sample) as u16;
                     } else {
                         new_sample =
-                            (self.clip(self.user_function(self.global_time), 1.0) * dmax_sample) as u16;
+                            (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
                     }
 
-                    self.block_memory[current_block + n] = new_sample;
+                    self.block_memory[(current_block + n) as usize] = new_sample;
                     previous_sample = new_sample;
 
                     self.global_time += time_step;
                 }
+
+                // Send block to sound devices
+                mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
+                mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
+                self.block_current += 1;
+                self.block_current %= self.block_count;
             }
         }
 
-        fn wave_out_proc(
-            &mut self,
+        pub fn wave_out_proc(
+            mut self,
             wave_out: mmsystem::HWAVEOUT,
             msg: u32,
             dw_param1: minwindef::DWORD,
@@ -233,25 +253,25 @@ pub mod noise {
             }
 
             *self.block_free.get_mut() += 1;
-            let mutex = Mutex::new(self.mux_block_not_zero);
+            Mutex::new(self.mux_block_not_zero);
             self.condition_variable
                 .touch(condition_variable::Notify::One);
         }
 
-        fn wave_out_proc_wrapper(
+        unsafe fn wave_out_proc_wrapper(
             wave_out: mmsystem::HWAVEOUT,
             msg: u32,
             dw_instance: minwindef::DWORD,
             dw_param1: minwindef::DWORD,
             dw_param2: minwindef::DWORD,
         ) {
-            (dw_instance as *mut NoiseMaker).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
+            (std::ptr::read(dw_instance as *mut NoiseMaker)).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
         }
 
-        pub fn enumerate() -> Vec<String> {
+        pub unsafe fn enumerate() -> Vec<String> {
             let device_count: u32 = mmeapi::waveOutGetNumDevs();
-            let devices: Vec<String> = Vec::new();
-            let woc: mmsystem::WAVEOUTCAPSW;
+            let mut devices: Vec<String> = Vec::new();
+            let mut woc: mmsystem::WAVEOUTCAPSW = mem::zeroed::<mmsystem::WAVEOUTCAPSW>();
 
             for n in 0..device_count {
                 if mmeapi::waveOutGetDevCapsW(
@@ -268,7 +288,7 @@ pub mod noise {
             return devices;
         }
 
-        pub fn set_user_function(&mut self, func: fn(f64) -> f64) {
+        pub fn set_user_function(&mut self, mut func: fn(f64) -> f64) {
             self.user_function = &mut func;
         }
 
