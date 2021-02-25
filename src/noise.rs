@@ -101,20 +101,21 @@ pub mod noise {
             return obj;
         }
 
-        unsafe fn create(&mut self, output_device: String) -> bool {
+        pub unsafe fn create(&mut self, output_device: String) -> bool {
             //self.thread = thread::spawn(self.main_thread);
-            let devices: Vec<String> = Vec::new();
+            let devices: Vec<String> = Self::enumerate();
             let mut devices_iter = devices.iter();
-
+            println!("Chosen output device {}", output_device);
             let find_res = devices_iter.position(|x| x.eq(&output_device));
-            if devices_iter.count() != 0 {
 
+            let device_id: usize = match find_res {
+                Some(x) => x,
+                None => 0,
+            };
+            println!("Device id {} | devices len {}", device_id, devices.len());
+            if device_id < devices.len() {
+                println!("Initializing wave_format");
                 // Device is available
-                let device_id: usize = match find_res {
-                    Some(x) => x,
-                    None => 0,
-                };
-
                 let mut wave_format: mmreg::WAVEFORMATEX = mem::zeroed::<mmreg::WAVEFORMATEX>();
                 wave_format.wFormatTag = mmreg::WAVE_FORMAT_PCM;
                 wave_format.nSamplesPerSec = self.sample_rate;
@@ -125,31 +126,36 @@ pub mod noise {
                 wave_format.cbSize = 0;
 
                 // Open Device if valid
-                if mmeapi::waveOutOpen(
-                    &mut self.hw_device,
-                    device_id as u32,
-                    &wave_format,
-                    Self::wave_out_proc_wrapper as basetsd::DWORD_PTR,
-                    self as *const Self as basetsd::DWORD_PTR,
-                    mmsystem::CALLBACK_FUNCTION,
-                ) != winerror::S_OK as u32
+                println!("Opening device (waveOutOpen)");
+                // Self::wave_out_proc_wrapper as basetsd::DWORD_PTR
+                if mmeapi::waveOutOpen(&mut self.hw_device, device_id as u32, &wave_format, mem::zeroed(), 
+                    self as *const Self as basetsd::DWORD_PTR, mmsystem::CALLBACK_FUNCTION) != winerror::S_OK as u32
                 {
+                    println!("Failed to open");
                     return self.destroy();
                 }
+
+                println!("Wave format initialized!");
             }
 
             // Allocate Wave | Block memory
+            println!("Allocating wave");
             self.block_memory = vec![0, (self.block_count * self.block_samples) as u16];
             //self.wave_headers = vec![mmsystem::WAVEHDR::default(); self.block_count as u16];
             //let mut arr = [0; mem::size_of::<T>() * self.block_count * self.block_samples];
-            self.wave_headers.reserve(self.block_count as usize);
+            println!("Reserving memory for Wave headers");
+            //self.wave_headers.reserve(self.block_count as usize);
+            self.wave_headers = vec![mem::zeroed(); self.block_count as usize];
 
             // Link headers to block memory
+            println!("Linking headers to block memory");
             for n in 0..self.block_count {
-                self.wave_headers[n as usize].dwBufferLength = self.block_samples * mem::size_of::<u16>() as u32;
-                self.wave_headers[n as usize].lpData = ((self.block_memory)
-                    .as_ptr()
-                    .offset((n * self.block_samples) as isize)) as ntdef::LPSTR;
+                let dwBufferLength = self.block_samples * mem::size_of::<u16>() as u32;
+                let lpData = ((self.block_memory).as_ptr().offset((n * self.block_samples) as isize)) as ntdef::LPSTR;
+
+                println!("Linking {}-th header | dwBufferLength = {} | wave headers len = {}", n, dwBufferLength, self.wave_headers.len());
+                self.wave_headers[n as usize].dwBufferLength = dwBufferLength;
+                self.wave_headers[n as usize].lpData = lpData;
             }
 
             *self.ready.get_mut() = true;
@@ -164,9 +170,12 @@ pub mod noise {
             //let thread_arc = cloned.clone();
             //? Starting thread
             self.thread = thread::spawn(move || {
+                println!("Main thread running!");
                 let noise = atomic_ptr.load(Ordering::Relaxed);
                 (*noise).main_thread();
             });
+
+            println!("Thread started!");
             
 
             //self.thread = thread::spawn(|| Self::main_thread(&mut self));
@@ -295,6 +304,7 @@ pub mod noise {
 
         pub fn set_user_function(&mut self, mut func: fn(f64) -> f64) {
             self.user_function = &mut func;
+            println!("User function is set!");
         }
 
         pub fn clip(&self, sample: f64, max: f64) -> f64 {

@@ -11,4 +11,4 @@ num = "0.3"
 condition_variable = "0.1.5"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = ["mmsystem", "mmeapi", "mmreg", "minwindef", "winerror", "basetsd", "ntdef"]}
+winapi = { version = "0.3.9", features = ["mmsystem", "mmeapi", "mmreg", "minwindef", "winerror", "basetsd", "ntdef", "winuser"]}

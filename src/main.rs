@@ -1,7 +1,11 @@
+extern crate winapi;
 
 mod noise;
 use noise::noise::{NoiseMaker, NoiseArgs};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicPtr, Ordering};
 use std::f64::consts::PI;
+use winapi::um::winuser;
+use num::pow;
 //use crate::noise::noise::NoiseMaker;
 
 
@@ -33,6 +37,9 @@ fn make_noise(current_time: f64) -> f64 {
     //return 0.1;
 }
 
+static mut frequency_output: f64 = 0.0;
+static mut octave_base_frequency: f64 = 110.0; // A2
+
 fn main() {
     println!("Hello, world!");
 
@@ -46,6 +53,26 @@ fn main() {
         }
     
         let mut sound: NoiseMaker = NoiseMaker::new(NoiseArgs::default());
+        sound.create((*devices[0]).to_string());
         sound.set_user_function(make_noise);
+
+        let twelve_root_of_two: f64 = num::pow(2.0, 1 / 12);
+
+        let current_key: i8 = -1;
+
+        loop {
+
+        }
+        
+        // loop {
+        //     let key_pressed: bool = false;
+        //     for k in 0 .. 16 {
+        //         if winuser::GetAsyncKeyState(b"ZSXCFVGBNJMK\xbcL\xbe\xbf"[k] as i32) as u16 & 0x8000 != 0 {
+        //             if current_key != k {
+                        
+        //             }
+        //         }
+        //     }
+        // }
     }
 }
