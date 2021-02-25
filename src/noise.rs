@@ -54,7 +54,7 @@ pub mod noise {
         block_count: u32,
         block_samples: u32,
         block_current: u32,
-        block_memory: Vec<u16>,
+        block_memory: Vec<i16>,
 
         condition_variable: condition_variable::ConditionVariable<usize>,
         mux_block_not_zero: Mutex<usize>,
@@ -84,7 +84,7 @@ pub mod noise {
                 block_count: args.blocks,
                 block_samples: args.block_samples,
                 block_current: 0,
-                block_memory: Vec::<u16>::new(),
+                block_memory: Vec::<i16>::new(),
                 block_free: AtomicU32::new(args.blocks),
 
                 condition_variable: condition_variable::ConditionVariable::new(0),
@@ -139,13 +139,16 @@ pub mod noise {
             }
 
             // Allocate Wave | Block memory
-            println!("Allocating wave");
-            self.block_memory = vec![0, (self.block_count * self.block_samples) as u16];
+            println!("Allocating wave (block count = {}, block_samples = {})", self.block_count, self.block_samples);
+            let block_memory_len = self.block_count * self.block_samples;
+            self.block_memory = vec![0; block_memory_len as usize];
+            println!("block memory len = {} | ({})", self.block_memory.len(), block_memory_len);
             //self.wave_headers = vec![mmsystem::WAVEHDR::default(); self.block_count as u16];
             //let mut arr = [0; mem::size_of::<T>() * self.block_count * self.block_samples];
             println!("Reserving memory for Wave headers");
             //self.wave_headers.reserve(self.block_count as usize);
             self.wave_headers = vec![mem::zeroed(); self.block_count as usize];
+            println!("Wave headers len = {}", self.wave_headers.len());
 
             // Link headers to block memory
             println!("Linking headers to block memory");
@@ -183,7 +186,9 @@ pub mod noise {
             //self.thread = thread::spawn(|| )
 
             //? Start
+            println!("Created new mutex");
             Mutex::new(&self.mux_block_not_zero);
+            println!("Notify one");
             self.condition_variable.touch(condition_variable::Notify::One);
 
             return true;
@@ -198,22 +203,24 @@ pub mod noise {
             self.thread.join().unwrap();
         }
 
-        fn get_time(&self) -> f64 {
+        pub fn get_time(&self) -> f64 {
             return self.global_time;
         }
 
         pub unsafe fn main_thread(&mut self) -> () {
+            println!("Main thread running...");
             self.global_time = 0.0;
             let time_step: f64 = 1.0 / self.sample_rate as f64;
-
+            
             let max_sample: i32 = pow(2, (std::mem::size_of::<u16>() * 8) - 1) - 1;
-
+            
             let dmax_sample: f64 = max_sample as f64;
             let mut previous_sample = 0;
-
+            
+            println!("Time step = {}, Max sample = {}, Dmax sample = {}", time_step, max_sample, dmax_sample);
             while self.ready.load(Ordering::Relaxed) {
                 // Wait for block to become available
-                if self.block_free.load(Ordering::Relaxed) == 0 {}
+                if self.block_free.load(Ordering::SeqCst) == 0 {}
 
                 // Block is here, so use it
                 *self.block_free.get_mut() -= 1;
@@ -221,6 +228,7 @@ pub mod noise {
                 // Prepare block for processing
                 if self.wave_headers[self.block_current as usize].dwFlags & 0x00000002 != 0
                 {
+                    println!("Waving out unprepared header");
                     mmeapi::waveOutUnprepareHeader(
                         self.hw_device,
                         &mut self.wave_headers[self.block_current as usize],
@@ -228,26 +236,31 @@ pub mod noise {
                     );
                 }
 
-                let mut new_sample = 0;
+                let mut new_sample;
                 let current_block: u32 = self.block_current * self.block_samples;
+                println!("Current block = {}", current_block);
 
                 for n in 0 .. self.block_samples {
-                    
+                    println!("{}-th block sample", n);
                     // User process
                     if self.user_function == ptr::null_mut() {
+                        println!("Running user PROCESS");
                         new_sample = (self.clip(self.user_process(self.global_time), 1.0) * dmax_sample) as u16;
                     } else {
-                        new_sample =
-                            (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
+                        println!("Running user FUNCTION");
+                        new_sample = (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
                     }
 
-                    self.block_memory[(current_block + n) as usize] = new_sample;
+                    println!("block memory len = {}, current block = {}, n = {}, new_sample = {}", self.block_memory.len(), current_block, n, new_sample);
+                    self.block_memory[(current_block + n) as usize] = new_sample as i16;
                     previous_sample = new_sample;
 
                     self.global_time += time_step;
+                    println!("global_time is {} at n = {}", self.global_time, n);
                 }
 
                 // Send block to sound devices
+                println!("Sending block to sound devices");
                 mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                 mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                 self.block_current += 1;
@@ -262,6 +275,7 @@ pub mod noise {
             dw_param1: minwindef::DWORD,
             dw_param2: minwindef::DWORD,
         ) {
+            println!("Wave out proc");
             if msg != mmsystem::WOM_DONE {
                 return;
             }
@@ -279,6 +293,7 @@ pub mod noise {
             dw_param1: minwindef::DWORD,
             dw_param2: minwindef::DWORD,
         ) {
+            println!("Wave out process wrapper");
             (std::ptr::read(dw_instance as *mut NoiseMaker)).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
         }
 
@@ -308,6 +323,7 @@ pub mod noise {
         }
 
         pub fn clip(&self, sample: f64, max: f64) -> f64 {
+            println!("clip sample = {}, max = {}", sample, max);
             return if sample >= 0.0 {
                 min_clip(sample, max)
             } else {
