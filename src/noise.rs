@@ -48,7 +48,7 @@ pub mod noise {
     }
 
     pub struct NoiseMaker {
-        user_function: *const fn(f64) -> f64,
+        user_function: AtomicPtr<fn(f64) -> f64>,
         sample_rate: u32,
         channels: u32,
         block_count: u32,
@@ -76,8 +76,8 @@ pub mod noise {
 
     impl NoiseMaker {
         pub fn new(args: NoiseArgs) -> Self {
-            let mut obj = Self {
-                user_function: ptr::null(),
+            let obj = Self {
+                user_function: AtomicPtr::<fn(f64) -> f64>::new(ptr::null_mut()),
                 sample_rate: args.sample_rate,
                 channels: args.channels,
 
@@ -153,12 +153,12 @@ pub mod noise {
             // Link headers to block memory
             println!("Linking headers to block memory");
             for n in 0..self.block_count {
-                let dwBufferLength = self.block_samples * mem::size_of::<u16>() as u32;
-                let lpData = ((self.block_memory).as_ptr().offset((n * self.block_samples) as isize)) as ntdef::LPSTR;
+                let dw_buffer_length = self.block_samples * mem::size_of::<u16>() as u32;
+                let lp_data = ((self.block_memory).as_ptr().offset((n * self.block_samples) as isize)) as ntdef::LPSTR;
 
-                println!("Linking {}-th header | dwBufferLength = {} | wave headers len = {}", n, dwBufferLength, self.wave_headers.len());
-                self.wave_headers[n as usize].dwBufferLength = dwBufferLength;
-                self.wave_headers[n as usize].lpData = lpData;
+                println!("Linking {}-th header | dwBufferLength = {} | wave headers len = {}", n, dw_buffer_length, self.wave_headers.len());
+                self.wave_headers[n as usize].dwBufferLength = dw_buffer_length;
+                self.wave_headers[n as usize].lpData = lp_data;
             }
 
             *self.ready.get_mut() = true;
@@ -174,12 +174,11 @@ pub mod noise {
             //? Starting thread
             self.thread = thread::spawn(move || {
                 println!("Main thread running!");
-                let noise = atomic_ptr.load(Ordering::Relaxed);
+                let noise = atomic_ptr.load(Ordering::SeqCst);
                 (*noise).main_thread();
             });
 
             println!("Thread started!");
-            
 
             //self.thread = thread::spawn(|| Self::main_thread(&mut self));
 
@@ -207,7 +206,7 @@ pub mod noise {
             return self.global_time;
         }
 
-        pub unsafe fn main_thread(&mut self) -> () {
+        pub fn main_thread(&mut self) -> () {
             println!("Main thread running...");
             self.global_time = 0.0;
             let time_step: f64 = 1.0 / self.sample_rate as f64;
@@ -229,11 +228,13 @@ pub mod noise {
                 if self.wave_headers[self.block_current as usize].dwFlags & 0x00000002 != 0
                 {
                     println!("Waving out unprepared header");
-                    mmeapi::waveOutUnprepareHeader(
-                        self.hw_device,
-                        &mut self.wave_headers[self.block_current as usize],
-                        mem::size_of::<mmsystem::WAVEHDR>() as u32,
-                    );
+                    unsafe {
+                        mmeapi::waveOutUnprepareHeader(
+                            self.hw_device,
+                            &mut self.wave_headers[self.block_current as usize],
+                            mem::size_of::<mmsystem::WAVEHDR>() as u32,
+                        );
+                    }
                 }
 
                 let mut new_sample;
@@ -243,12 +244,17 @@ pub mod noise {
                 for n in 0 .. self.block_samples {
                     println!("{}-th block sample", n);
                     // User process
-                    if self.user_function == ptr::null_mut() {
+                    if self.user_function.load(Ordering::SeqCst) == ptr::null_mut() {
                         println!("Running user PROCESS");
                         new_sample = (self.clip(self.user_process(self.global_time), 1.0) * dmax_sample) as u16;
                     } else {
-                        println!("Running user FUNCTION");
-                        new_sample = (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
+                        unsafe {
+                            //println!("Running user FUNCTION | address = {}", (*self.user_function) as u32);
+                            //new_sample = (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
+                            println!("Running user FUNCTION | address = {}", (*self.user_function.load(Ordering::SeqCst)) as u32);
+                            let f = *self.user_function.load(Ordering::SeqCst);
+                            new_sample = (self.clip((f)(self.global_time), 1.0) * dmax_sample) as u16;
+                        }
                     }
 
                     println!("block memory len = {}, current block = {}, n = {}, new_sample = {}", self.block_memory.len(), current_block, n, new_sample);
@@ -261,8 +267,10 @@ pub mod noise {
 
                 // Send block to sound devices
                 println!("Sending block to sound devices");
-                mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
-                mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
+                unsafe {
+                    mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
+                    mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
+                }
                 self.block_current += 1;
                 self.block_current %= self.block_count;
             }
@@ -318,7 +326,8 @@ pub mod noise {
         }
 
         pub fn set_user_function(&mut self, mut func: fn(f64) -> f64) {
-            self.user_function = &mut func;
+            //self.user_function = &mut func;
+            self.user_function.store(&mut func, Ordering::SeqCst);
             println!("User function is set!");
         }
 
