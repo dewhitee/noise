@@ -228,7 +228,7 @@ pub mod noise {
             let dmax_sample: f64 = max_sample as f64;
             let mut previous_sample = 0;
             
-            println!("Time step = {}, Max sample = {}, Dmax sample = {}", time_step, max_sample, dmax_sample);
+            //println!("Time step = {}, Max sample = {}, Dmax sample = {}", time_step, max_sample, dmax_sample);
             while self.ready.load(Ordering::SeqCst) {
                 
                 // Wait for block to become available
@@ -290,33 +290,42 @@ pub mod noise {
                     mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                 }
                 self.block_current += 1;
-                println!("block_current = {} | new block_current = {} (block_count = {})", self.block_current, self.block_current % self.block_count, self.block_count);
+                //println!("block_current = {} | new block_current = {} (block_count = {})", self.block_current, self.block_current % self.block_count, self.block_count);
                 self.block_current %= self.block_count;
             }
         }
 
         pub fn wave_out_proc(
             &mut self,
-            wave_out: mmsystem::HWAVEOUT,
+            _wave_out: mmsystem::HWAVEOUT,
             msg: u32,
-            dw_param1: minwindef::DWORD,
-            dw_param2: minwindef::DWORD,
+            _dw_param1: minwindef::DWORD,
+            _dw_param2: minwindef::DWORD,
         ) {
             println!("Wave out proc");
-            //? NOW STATUS ACCESS VIOLATION IS HERE
             if msg != mmsystem::WOM_DONE {
+                println!("msg is not mmsystem::WOM_DONE!");
                 return;
+            } else {
+                println!("msg is mmsystem::WOM_DONE");
             }
-
+            println!("msg = {}", msg);
+            //? NOW STATUS ACCESS VIOLATION IS HERE (segfault)
+            //? Can't access self
+            println!("Self pointer= {}", self.get_time());
+            println!("incrementing block_free {}", self.block_free.load(Ordering::SeqCst));
             *self.block_free.get_mut() += 1;
+            println!("init mutex");
             let mutex = Mutex::new(&self.mux_block_not_zero);
+            println!("_started...");
             let _started = mutex.lock().unwrap();
+            println!("notifying...");
             self.condition_variable.notify_one();
             //self.condition_variable
             //    .touch(condition_variable::Notify::One);
         }
 
-        unsafe extern "stdcall" fn wave_out_proc_wrapper(
+        unsafe fn wave_out_proc_wrapper(
             wave_out: mmsystem::HWAVEOUT,
             msg: u32,
             dw_instance: minwindef::DWORD,
@@ -326,6 +335,7 @@ pub mod noise {
             println!("Wave out process wrapper | wave_out = {} | msg = {} | dw_instance = {} | dw_param1 = {} | dw_param2 = {}", wave_out as u32, msg, dw_instance, 
             dw_param1 as u32, dw_param2 as u32);
             let dw_instance_ptr: *mut NoiseMaker = dw_instance as *mut NoiseMaker;
+            //let arc_ptr = Arc::new(dw_instance_ptr);
             (*dw_instance_ptr).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
         }
 
