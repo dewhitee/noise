@@ -1,6 +1,6 @@
 pub mod noise {
 
-    extern crate condition_variable;
+    //extern crate condition_variable;
     extern crate num;
     extern crate winapi;
     use num::pow;
@@ -9,8 +9,7 @@ pub mod noise {
     use std::mem;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicPtr, Ordering};
-    use std::sync::Mutex;
-    use std::sync::Arc;
+    use std::sync::{Mutex, Arc, Condvar};
     use std::thread;
     use std::vec::Vec;
     use std::clone::Clone;
@@ -56,8 +55,8 @@ pub mod noise {
         block_current: u32,
         block_memory: Vec<i16>,
 
-        condition_variable: condition_variable::ConditionVariable<usize>,
-        mux_block_not_zero: Mutex<usize>,
+        condition_variable: Condvar,
+        mux_block_not_zero: Mutex<i16>,
 
         wave_headers: Vec<mmsystem::WAVEHDR>, // Array of headers
         hw_device: mmsystem::HWAVEOUT,        // Chosen device
@@ -87,7 +86,7 @@ pub mod noise {
                 block_memory: Vec::<i16>::new(),
                 block_free: AtomicU32::new(args.blocks),
 
-                condition_variable: condition_variable::ConditionVariable::new(0),
+                condition_variable: Condvar::new(),
                 mux_block_not_zero: Mutex::new(0),
 
                 wave_headers: Vec::<mmsystem::WAVEHDR>::new(),
@@ -176,6 +175,7 @@ pub mod noise {
                 println!("Main thread running!");
                 let noise = atomic_ptr.load(Ordering::SeqCst);
                 (*noise).main_thread();
+                println!("Thread passed");
             });
 
             println!("Thread started!");
@@ -186,9 +186,11 @@ pub mod noise {
 
             //? Start
             println!("Created new mutex");
-            Mutex::new(&self.mux_block_not_zero);
+            let mutex = Mutex::new(&self.mux_block_not_zero);
+            let started = mutex.lock().unwrap();
             println!("Notify one");
-            self.condition_variable.touch(condition_variable::Notify::One);
+            //self.condition_variable.touch(condition_variable::Notify::One);
+            self.condition_variable.notify_one();
 
             return true;
         }
@@ -217,10 +219,13 @@ pub mod noise {
             let mut previous_sample = 0;
             
             println!("Time step = {}, Max sample = {}, Dmax sample = {}", time_step, max_sample, dmax_sample);
-            while self.ready.load(Ordering::Relaxed) {
+            while self.ready.load(Ordering::SeqCst) {
+                
                 // Wait for block to become available
                 if self.block_free.load(Ordering::SeqCst) == 0 {
-                    Mutex::new(&self.mux_block_not_zero);
+                    let mutex = Mutex::new(&self.mux_block_not_zero);
+                    let started = mutex.lock().unwrap();
+                    self.condition_variable.wait(started).unwrap();
                 }
 
                 // Block is here, so use it
@@ -240,23 +245,23 @@ pub mod noise {
                     }
                 }
 
-                let mut new_sample;
+                let mut new_sample: i16;
                 let current_block: u32 = self.block_current * self.block_samples;
                 //println!("Current block = {}", current_block);
 
                 for n in 0 .. self.block_samples {
-                    println!("{}-th block sample", n);
+                    //println!("{}-th block sample", n);
                     // User process
                     if self.user_function.load(Ordering::SeqCst) == ptr::null_mut() {
                         //println!("Running user PROCESS");
-                        new_sample = (self.clip(self.user_process(self.global_time), 1.0) * dmax_sample) as u16;
+                        new_sample = (self.clip(self.user_process(self.global_time), 1.0) * dmax_sample) as i16;
                     } else {
                         unsafe {
                             //println!("Running user FUNCTION | address = {}", (*self.user_function) as u32);
                             //new_sample = (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
                             //println!("Running user FUNCTION | address = {}", (*self.user_function.load(Ordering::SeqCst)) as u32);
                             let f = *self.user_function.load(Ordering::SeqCst);
-                            new_sample = (self.clip((f)(self.global_time), 1.0) * dmax_sample) as u16;
+                            new_sample = (self.clip((f)(self.global_time), 1.0) * dmax_sample) as i16;
                         }
                     }
 
@@ -269,12 +274,13 @@ pub mod noise {
                 }
 
                 // Send block to sound devices
-                //println!("Sending block to sound devices");
+                println!("Sending block to sound devices");
                 unsafe {
                     mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                     mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                 }
                 self.block_current += 1;
+                println!("block_current = {} | new block_current = {} (block_count = {})", self.block_current, self.block_current % self.block_count, self.block_count);
                 self.block_current %= self.block_count;
             }
         }
@@ -292,9 +298,11 @@ pub mod noise {
             }
 
             *self.block_free.get_mut() += 1;
-            Mutex::new(self.mux_block_not_zero);
-            self.condition_variable
-                .touch(condition_variable::Notify::One);
+            let mutex = Mutex::new(self.mux_block_not_zero);
+            let _started = mutex.lock().unwrap();
+            self.condition_variable.notify_one();
+            //self.condition_variable
+            //    .touch(condition_variable::Notify::One);
         }
 
         unsafe fn wave_out_proc_wrapper(
