@@ -73,6 +73,11 @@ pub mod noise {
         }
     }
 
+    impl Drop for NoiseMaker {
+     
+        fn drop(&mut self) { self.destroy(); }
+    }
+
     static mut ATOMIC_PTR: AtomicPtr<NoiseMaker> = AtomicPtr::<NoiseMaker>::new(ptr::null_mut());
 
     impl NoiseMaker {
@@ -103,7 +108,6 @@ pub mod noise {
         }
 
         pub unsafe fn create(&mut self, output_device: String) -> bool {
-            //self.thread = thread::spawn(self.main_thread);
             let devices: Vec<String> = Self::enumerate();
             let mut devices_iter = devices.iter();
             println!("Chosen output device {}", output_device);
@@ -114,7 +118,6 @@ pub mod noise {
                 None => 0,
             };
 
-            //let atomic_ptr: AtomicPtr<NoiseMaker> = AtomicPtr::new(self);
             ATOMIC_PTR = AtomicPtr::new(self);
 
             println!("Device id {} | devices len {}", device_id, devices.len());
@@ -132,12 +135,10 @@ pub mod noise {
 
                 // Open Device if valid
                 println!("Opening device (waveOutOpen)");
-                //let selfptr = self as *const Self as basetsd::DWORD_PTR;
                 let selfptr = ATOMIC_PTR.load(Ordering::SeqCst) as basetsd::DWORD_PTR;
                 let callback_func_ptr = Self::wave_out_proc_wrapper as basetsd::DWORD_PTR;
                 println!("Pointer to self as basetsd::DWORD_PTR = {}", selfptr);
                 println!("Pointer to self as u32 = {}", ATOMIC_PTR.load(Ordering::SeqCst) as u32);
-                // Self::wave_out_proc_wrapper as basetsd::DWORD_PTR triggers STATUS_ACCESS_VIOLATION
                 if mmeapi::waveOutOpen(&mut self.hw_device, device_id as u32, &wave_format, callback_func_ptr, 
                     selfptr, mmsystem::CALLBACK_FUNCTION) != winerror::S_OK as u32
                 {
@@ -153,10 +154,7 @@ pub mod noise {
             let block_memory_len = self.block_count * self.block_samples;
             self.block_memory = vec![0; block_memory_len as usize];
             println!("block memory len = {} | ({})", self.block_memory.len(), block_memory_len);
-            //self.wave_headers = vec![mmsystem::WAVEHDR::default(); self.block_count as u16];
-            //let mut arr = [0; mem::size_of::<T>() * self.block_count * self.block_samples];
             println!("Reserving memory for Wave headers");
-            //self.wave_headers.reserve(self.block_count as usize);
             self.wave_headers = vec![mem::zeroed(); self.block_count as usize];
             println!("Wave headers len = {}", self.wave_headers.len());
 
@@ -173,15 +171,8 @@ pub mod noise {
 
             *self.ready.get_mut() = true;
 
-            //? Clone self and wrap into the mutex
-            //let cloned = self.clone();
-            //let cloned = Mutex::new(self);
-            //let cloned = Arc::new(cloned);
-
-            //let atomic_ptr = AtomicPtr::new(self);
-
             println!("atomic_ptr before thread = {}", ATOMIC_PTR.load(Ordering::SeqCst) as basetsd::DWORD_PTR);
-            //let thread_arc = cloned.clone();
+
             //? Starting thread
             self.thread = thread::spawn(move || {
                 println!("Main thread running!");
@@ -193,16 +184,13 @@ pub mod noise {
 
             println!("Thread started!");
 
-            //self.thread = thread::spawn(|| Self::main_thread(&mut self));
-
-            //self.thread = thread::spawn(|| )
-
             //? Start
+
             println!("Created new mutex");
             let mutex = Mutex::new(&self.mux_block_not_zero);
             let started = mutex.lock().unwrap();
+
             println!("Notify one");
-            //self.condition_variable.touch(condition_variable::Notify::One);
             self.condition_variable.notify_one();
 
             return true;
@@ -212,10 +200,10 @@ pub mod noise {
             return false;
         }
 
-        fn stop(mut self) {
-            *self.ready.get_mut() = false;
-            self.thread.join().unwrap();
-        }
+        // fn stop(&mut self) {
+        //     *self.ready.get_mut() = false;
+        //     self.thread.join().unwrap();
+        // }
 
         pub fn get_time(&self) -> f64 {
             return self.global_time;
@@ -233,22 +221,23 @@ pub mod noise {
             
             //println!("Time step = {}, Max sample = {}, Dmax sample = {}", time_step, max_sample, dmax_sample);
             while self.ready.load(Ordering::SeqCst) {
-                
+                println!("main thread ready...");
                 // Wait for block to become available
                 if self.block_free.load(Ordering::SeqCst) == 0 {
+                    println!("Waiting for block to become available");
                     let mutex = Mutex::new(&self.mux_block_not_zero);
                     let started = mutex.lock().unwrap();
                     self.condition_variable.wait(started).unwrap();
                 }
-
+                //println!("block is here");
                 // Block is here, so use it
                 // todo: fix thread '<unnamed>' panicked at 'attempt to subtract with overflow', src\noise.rs:227:17
                 *self.block_free.get_mut() -= 1;
-
+                //println!("prepare block for processing");
                 // Prepare block for processing
                 if self.wave_headers[self.block_current as usize].dwFlags & 0x00000002 != 0
                 {
-                    //println!("Waving out unprepared header");
+                    println!("Waving out unprepared header");
                     unsafe {
                         mmeapi::waveOutUnprepareHeader(
                             self.hw_device,
@@ -257,24 +246,25 @@ pub mod noise {
                         );
                     }
                 }
-
+                //println!("new sample");
                 let mut new_sample: i16;
                 let current_block: u32 = self.block_current * self.block_samples;
-                //println!("Current block = {}", current_block);
-
+                //println!("block_samples = {}", self.block_samples);
                 for n in 0 .. self.block_samples {
-                    //println!("{}-th block sample", n);
+                    //println!("Processing block");
                     // User process
                     if self.user_function.load(Ordering::SeqCst) == ptr::null_mut() {
-                        //println!("Running user PROCESS");
+                        //println!("User process");
                         new_sample = (self.clip(self.user_process(self.global_time), 1.0) * dmax_sample) as i16;
                     } else {
                         unsafe {
-                            //println!("Running user FUNCTION | address = {}", (*self.user_function) as u32);
-                            //new_sample = (self.clip((*self.user_function)(self.global_time), 1.0) * dmax_sample) as u16;
-                            //println!("Running user FUNCTION | address = {}", (*self.user_function.load(Ordering::SeqCst)) as u32);
+                            //println!("user function is loaded");
                             let f = *self.user_function.load(Ordering::SeqCst);
+                            println!("user function is loaded 2");
+                            println!("f = {}", f as u32);
+                            //? This line triggers segfault when main loop is running with some code
                             new_sample = (self.clip((f)(self.global_time), 1.0) * dmax_sample) as i16;
+                            println!("user function is loaded 3");
                         }
                     }
 
@@ -287,11 +277,12 @@ pub mod noise {
                 }
 
                 // Send block to sound devices
-                //println!("Sending block to sound devices");
+                println!("Sending block to sound devices");
                 unsafe {
                     mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                     mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                 }
+                println!("Blocks send");
                 self.block_current += 1;
                 //println!("block_current = {} | new block_current = {} (block_count = {})", self.block_current, self.block_current % self.block_count, self.block_count);
                 self.block_current %= self.block_count;
@@ -324,19 +315,6 @@ pub mod noise {
                 //println!("notifying...");
                 (*p).condition_variable.notify_one();
             }
-            //? NOW STATUS ACCESS VIOLATION IS HERE (segfault)
-            //? Can't access self
-            
-            //println!("incrementing block_free {}", self.block_free.load(Ordering::SeqCst));
-            //?*self.block_free.get_mut() += 1;
-            //?println!("init mutex");
-            //?let mutex = Mutex::new(&self.mux_block_not_zero);
-            //?println!("_started...");
-            //?let _started = mutex.lock().unwrap();
-            //?println!("notifying...");
-            //?self.condition_variable.notify_one();
-            //?self.condition_variable
-            //?    .touch(condition_variable::Notify::One);
         }
 
         unsafe fn wave_out_proc_wrapper(
@@ -348,15 +326,9 @@ pub mod noise {
         ) {
             //println!("Wave out process wrapper | wave_out = {} | msg = {} | dw_instance = {} | dw_param1 = {} | dw_param2 = {}", wave_out as u32, msg, dw_instance, 
             //dw_param1 as u32, dw_param2 as u32);
+            //println!("casting dw_instance as NoiseMaker (dw_instance = {})", dw_instance);
             let dw_instance_ptr: *mut NoiseMaker = dw_instance as *mut NoiseMaker;
-            //let dw_instance_ptr = AtomicPtr::new(dw_instance as *mut NoiseMaker);
-            //let dw_instance_ptr = Box::new(dw_instance as *mut NoiseMaker);
-            //let strong = Arc::new(dw_instance_ptr);
-            //let weak = Arc::downgrade(&strong);
-            //let raw = weak.into_raw();
-            //let arc_ptr = Arc::new(&dw_instance_ptr);
-            //let arc_ptr = Arc::downgrade(&arc_ptr);
-            //let pt = dw_instance_ptr.load(Ordering::SeqCst);
+            //println!("Calling wave_out_proc");
             (*dw_instance_ptr).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
         }
 
