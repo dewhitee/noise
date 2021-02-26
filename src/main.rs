@@ -1,13 +1,15 @@
 extern crate winapi;
 
 mod noise;
+mod envelope;
+
 use noise::noise::{NoiseMaker, NoiseArgs};
+use envelope::envelope::EnvelopeADSR;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicPtr, Ordering};
 use std::f64::consts::PI;
 use winapi::um::winuser;
 use num::pow;
 //use crate::noise::noise::NoiseMaker;
-
 
 
 fn hz_to_angular(hertz: f64) -> f64 {
@@ -59,21 +61,29 @@ fn main() {
 
         let twelve_root_of_two: f64 = num::pow(2.0, 1 / 12);
 
-        let current_key: i8 = -1;
-
-        loop {
-
-        }
+        let mut current_key: i8 = -1;
+        let mut envelope: EnvelopeADSR = EnvelopeADSR::new();
         
-        // loop {
-        //     let key_pressed: bool = false;
-        //     for k in 0 .. 16 {
-        //         if winuser::GetAsyncKeyState(b"ZSXCFVGBNJMK\xbcL\xbe\xbf"[k] as i32) as u16 & 0x8000 != 0 {
-        //             if current_key != k {
-                        
-        //             }
-        //         }
-        //     }
-        // }
+        loop {
+            let key_pressed: bool = false;
+            for k in 0 .. 16 {
+                if winuser::GetAsyncKeyState(b"ZSXCFVGBNJMK\xbcL\xbe\xbf"[k] as i32) as u16 & 0x8000 != 0 {
+                    if current_key != k as i8 {
+                        frequency_output = octave_base_frequency * num::pow(twelve_root_of_two, k);
+                        envelope.set_note_on(sound.get_time());
+                        println!("\rNote On : {}s {}Hz", sound.get_time(), frequency_output);
+                        current_key = k as i8;
+                    }
+                }
+            }
+
+            if !key_pressed {
+                if current_key != -1 {
+                    println!("\rNote Off : {}s", sound.get_time());
+                    envelope.set_note_off(sound.get_time());
+                    current_key = -1;
+                }
+            }
+        }
     }
 }
