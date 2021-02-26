@@ -287,7 +287,7 @@ pub mod noise {
                 }
 
                 // Send block to sound devices
-                println!("Sending block to sound devices");
+                //println!("Sending block to sound devices");
                 unsafe {
                     mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                     mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
@@ -305,23 +305,23 @@ pub mod noise {
             dw_param1: minwindef::DWORD,
             dw_param2: minwindef::DWORD
         ) {
-            println!("Wave out proc");
+            //println!("Wave out proc");
             if msg != mmsystem::WOM_DONE {
-                println!("msg is not mmsystem::WOM_DONE!");
+                //println!("msg is not mmsystem::WOM_DONE!");
                 return;
             } else {
-                println!("msg is mmsystem::WOM_DONE");
+                //println!("msg is mmsystem::WOM_DONE");
             }
-            println!("msg = {}", msg);
+            //println!("msg = {}", msg);
             unsafe {
                 let p = ATOMIC_PTR.load(Ordering::SeqCst);
-                println!("hey = {}", p as u32);
+                //println!("hey = {}", p as u32);
                 *(*p).block_free.get_mut() += 1;
-                println!("init mutex");
+                //println!("init mutex");
                 let mutex = Mutex::new(&(*p).mux_block_not_zero);
-                println!("_started...");
+                //println!("_started...");
                 let _started = mutex.lock().unwrap();
-                println!("notifying...");
+                //println!("notifying...");
                 (*p).condition_variable.notify_one();
             }
             //? NOW STATUS ACCESS VIOLATION IS HERE (segfault)
@@ -346,8 +346,8 @@ pub mod noise {
             dw_param1: minwindef::DWORD,
             dw_param2: minwindef::DWORD,
         ) {
-            println!("Wave out process wrapper | wave_out = {} | msg = {} | dw_instance = {} | dw_param1 = {} | dw_param2 = {}", wave_out as u32, msg, dw_instance, 
-            dw_param1 as u32, dw_param2 as u32);
+            //println!("Wave out process wrapper | wave_out = {} | msg = {} | dw_instance = {} | dw_param1 = {} | dw_param2 = {}", wave_out as u32, msg, dw_instance, 
+            //dw_param1 as u32, dw_param2 as u32);
             let dw_instance_ptr: *mut NoiseMaker = dw_instance as *mut NoiseMaker;
             //let dw_instance_ptr = AtomicPtr::new(dw_instance as *mut NoiseMaker);
             //let dw_instance_ptr = Box::new(dw_instance as *mut NoiseMaker);
