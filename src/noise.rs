@@ -247,17 +247,17 @@ pub mod noise {
 
         fn oscillate(&self, hertz: f64, current_time: f64, osc_type: i32) -> f64 {
             return match osc_type {
-                0 => f64::sin(hz_to_angular(hertz) * current_time),
-                1 => if f64::sin(hz_to_angular(hertz) * current_time) > 0.0 { 1.0 } else { -1.0 },
-                2 => f64::asin(f64::sin(hz_to_angular(hertz) * current_time)) * (2.0 / PI),
-                3 => {
+                0 => f64::sin(hz_to_angular(hertz) * current_time), // Sine wave
+                1 => if f64::sin(hz_to_angular(hertz) * current_time) > 0.0 { 1.0 } else { -1.0 }, // Square wave
+                2 => f64::asin(f64::sin(hz_to_angular(hertz) * current_time)) * (2.0 / PI), // Triangle wave
+                3 => { // Saw wave (analog / warm / slow)
                     let mut output = 0.0;
                     for n in 1 .. 100 {
                         output += (f64::sin(n as f64 * hz_to_angular(hertz) * current_time)) / n as f64;
                     }
                     return output * (2.0 / PI);
                 },
-                4 => (2.0 / PI) * (hertz * PI * (current_time % (1.0 / hertz)) - (PI / 2.0)),
+                4 => (2.0 / PI) * (hertz * PI * (current_time % (1.0 / hertz)) - (PI / 2.0)), // Saw wave (optimised / harsh / fast)
                 _ => 0.0
             }
         }
@@ -267,7 +267,9 @@ pub mod noise {
 
             //println!("Freq output = {} | oscillate = {}", self.frequency_output, self.oscillate(self.frequency_output * 0.5, current_time, 3));
             //let envelope = *self.envelop.load(Ordering::SeqCst);
-            let output = self.oscillate(self.frequency_output, current_time, 4);
+            let output = self.oscillate(self.frequency_output, current_time, 1) 
+                + self.oscillate(self.frequency_output * 0.5, current_time, 4)
+                + self.oscillate(self.frequency_output * 1.0, current_time, 1);
             //let output = envelope.get_amplitude(current_time) *
             //(
             //    self.oscillate(self.frequency_output * 0.5, current_time, 3) + 
