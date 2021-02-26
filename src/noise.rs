@@ -9,7 +9,7 @@ pub mod noise {
     use std::mem;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicPtr, Ordering};
-    use std::sync::{Mutex, Arc, Condvar};
+    use std::sync::{Mutex, Arc, Condvar, Weak};
     use std::thread;
     use std::vec::Vec;
     use std::clone::Clone;
@@ -73,6 +73,8 @@ pub mod noise {
         }
     }
 
+    static mut ATOMIC_PTR: AtomicPtr<NoiseMaker> = AtomicPtr::<NoiseMaker>::new(ptr::null_mut());
+
     impl NoiseMaker {
         pub fn new(args: NoiseArgs) -> Self {
             let obj = Self {
@@ -112,7 +114,8 @@ pub mod noise {
                 None => 0,
             };
 
-            let atomic_ptr: AtomicPtr<NoiseMaker> = AtomicPtr::new(self);
+            //let atomic_ptr: AtomicPtr<NoiseMaker> = AtomicPtr::new(self);
+            ATOMIC_PTR = AtomicPtr::new(self);
 
             println!("Device id {} | devices len {}", device_id, devices.len());
             if device_id < devices.len() {
@@ -130,10 +133,10 @@ pub mod noise {
                 // Open Device if valid
                 println!("Opening device (waveOutOpen)");
                 //let selfptr = self as *const Self as basetsd::DWORD_PTR;
-                let selfptr = atomic_ptr.load(Ordering::SeqCst) as basetsd::DWORD_PTR;
+                let selfptr = ATOMIC_PTR.load(Ordering::SeqCst) as basetsd::DWORD_PTR;
                 let callback_func_ptr = Self::wave_out_proc_wrapper as basetsd::DWORD_PTR;
                 println!("Pointer to self as basetsd::DWORD_PTR = {}", selfptr);
-                println!("Pointer to self as u32 = {}", atomic_ptr.load(Ordering::SeqCst) as u32);
+                println!("Pointer to self as u32 = {}", ATOMIC_PTR.load(Ordering::SeqCst) as u32);
                 // Self::wave_out_proc_wrapper as basetsd::DWORD_PTR triggers STATUS_ACCESS_VIOLATION
                 if mmeapi::waveOutOpen(&mut self.hw_device, device_id as u32, &wave_format, callback_func_ptr, 
                     selfptr, mmsystem::CALLBACK_FUNCTION) != winerror::S_OK as u32
@@ -177,12 +180,12 @@ pub mod noise {
 
             //let atomic_ptr = AtomicPtr::new(self);
 
-            println!("atomic_ptr before thread = {}", atomic_ptr.load(Ordering::SeqCst) as basetsd::DWORD_PTR);
+            println!("atomic_ptr before thread = {}", ATOMIC_PTR.load(Ordering::SeqCst) as basetsd::DWORD_PTR);
             //let thread_arc = cloned.clone();
             //? Starting thread
             self.thread = thread::spawn(move || {
                 println!("Main thread running!");
-                let noise = atomic_ptr.load(Ordering::SeqCst);
+                let noise = ATOMIC_PTR.load(Ordering::SeqCst);
                 println!("atomic_ptr = {}", noise as basetsd::DWORD_PTR);
                 (*noise).main_thread();
                 println!("Thread passed");
@@ -297,10 +300,10 @@ pub mod noise {
 
         pub fn wave_out_proc(
             &mut self,
-            _wave_out: mmsystem::HWAVEOUT,
+            wave_out: mmsystem::HWAVEOUT,
             msg: u32,
-            _dw_param1: minwindef::DWORD,
-            _dw_param2: minwindef::DWORD,
+            dw_param1: minwindef::DWORD,
+            dw_param2: minwindef::DWORD
         ) {
             println!("Wave out proc");
             if msg != mmsystem::WOM_DONE {
@@ -310,19 +313,30 @@ pub mod noise {
                 println!("msg is mmsystem::WOM_DONE");
             }
             println!("msg = {}", msg);
+            unsafe {
+                let p = ATOMIC_PTR.load(Ordering::SeqCst);
+                println!("hey = {}", p as u32);
+                *(*p).block_free.get_mut() += 1;
+                println!("init mutex");
+                let mutex = Mutex::new(&(*p).mux_block_not_zero);
+                println!("_started...");
+                let _started = mutex.lock().unwrap();
+                println!("notifying...");
+                (*p).condition_variable.notify_one();
+            }
             //? NOW STATUS ACCESS VIOLATION IS HERE (segfault)
             //? Can't access self
-            println!("Self pointer= {}", self.get_time());
-            println!("incrementing block_free {}", self.block_free.load(Ordering::SeqCst));
-            *self.block_free.get_mut() += 1;
-            println!("init mutex");
-            let mutex = Mutex::new(&self.mux_block_not_zero);
-            println!("_started...");
-            let _started = mutex.lock().unwrap();
-            println!("notifying...");
-            self.condition_variable.notify_one();
-            //self.condition_variable
-            //    .touch(condition_variable::Notify::One);
+            
+            //println!("incrementing block_free {}", self.block_free.load(Ordering::SeqCst));
+            //?*self.block_free.get_mut() += 1;
+            //?println!("init mutex");
+            //?let mutex = Mutex::new(&self.mux_block_not_zero);
+            //?println!("_started...");
+            //?let _started = mutex.lock().unwrap();
+            //?println!("notifying...");
+            //?self.condition_variable.notify_one();
+            //?self.condition_variable
+            //?    .touch(condition_variable::Notify::One);
         }
 
         unsafe fn wave_out_proc_wrapper(
@@ -335,7 +349,14 @@ pub mod noise {
             println!("Wave out process wrapper | wave_out = {} | msg = {} | dw_instance = {} | dw_param1 = {} | dw_param2 = {}", wave_out as u32, msg, dw_instance, 
             dw_param1 as u32, dw_param2 as u32);
             let dw_instance_ptr: *mut NoiseMaker = dw_instance as *mut NoiseMaker;
-            //let arc_ptr = Arc::new(dw_instance_ptr);
+            //let dw_instance_ptr = AtomicPtr::new(dw_instance as *mut NoiseMaker);
+            //let dw_instance_ptr = Box::new(dw_instance as *mut NoiseMaker);
+            //let strong = Arc::new(dw_instance_ptr);
+            //let weak = Arc::downgrade(&strong);
+            //let raw = weak.into_raw();
+            //let arc_ptr = Arc::new(&dw_instance_ptr);
+            //let arc_ptr = Arc::downgrade(&arc_ptr);
+            //let pt = dw_instance_ptr.load(Ordering::SeqCst);
             (*dw_instance_ptr).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
         }
 
