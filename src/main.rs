@@ -114,6 +114,7 @@ fn main() {
             if !KEY_PRESSED {
                 if CURRENT_KEY != -1 {
                     println!("\rNote Off : {}s", sound.get_time());
+                    sound.set_frequency_output(0.0);
                     sound.set_envelope_note_off();
                     CURRENT_KEY = -1;
                 }

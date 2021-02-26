@@ -263,12 +263,12 @@ pub mod noise {
         }
 
         unsafe fn default_make_noise(&self, current_time: f64) -> f64 {
-            //let output: f64 = 
-            //println!("Making noise!!");
-            return 0.5 * f64::sin(self.frequency_output * 2 as f64 * PI * current_time);
+            //return 0.5 * f64::sin(self.frequency_output * 2 as f64 * PI * current_time);
+
             //println!("Freq output = {} | oscillate = {}", self.frequency_output, self.oscillate(self.frequency_output * 0.5, current_time, 3));
-            //let envelope = self.envelop.load(Ordering::SeqCst);
-            //let output = (*envelope).get_amplitude(current_time) *
+            //let envelope = *self.envelop.load(Ordering::SeqCst);
+            let output = self.oscillate(self.frequency_output, current_time, 4);
+            //let output = envelope.get_amplitude(current_time) *
             //(
             //    self.oscillate(self.frequency_output * 0.5, current_time, 3) + 
             //    self.oscillate(self.frequency_output * 1.0, current_time, 1)
@@ -277,6 +277,7 @@ pub mod noise {
             //(*envelope).get_amplitude(current_time));
             //println!("output = {}", output);
             //return output * 0.4;
+            return output * 0.4;
         }
 
         pub fn main_thread(&mut self) -> () {
