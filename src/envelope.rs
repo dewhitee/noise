@@ -16,6 +16,7 @@ pub mod envelope {
 
     impl EnvelopeADSR {
         pub fn new() -> Self {
+            println!("Initialized envelope");
             return Self {
                 attack_time: 0.01,
                 decay_time: 0.01,
@@ -36,6 +37,7 @@ pub mod envelope {
             let lifetime: f64 = time - self.trigger_on_time;
 
             if self.note_on {
+                //println!("Note on!");
                 // Attack, Decay, Sustain
 
                 // Attack
@@ -56,9 +58,15 @@ pub mod envelope {
 
             } else {
                 // Release
+                //println!("Note off");
                 amplitude = ((time - self.trigger_off_time) / self.release_time) * (0.0 - self.sustain_amplitude) + self.sustain_amplitude;
             }
 
+            if amplitude <= 0.0001 {
+                amplitude = 0.0;
+            }
+
+            //println!("amplitude = {}", amplitude);
             return amplitude;
         }
 

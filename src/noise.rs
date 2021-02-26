@@ -3,6 +3,9 @@ pub mod noise {
     //extern crate condition_variable;
     extern crate num;
     extern crate winapi;
+
+    use crate::envelope::envelope::EnvelopeADSR;
+
     use num::pow;
     use num::Integer;
 
@@ -65,6 +68,9 @@ pub mod noise {
         block_free: AtomicU32,
         thread: thread::JoinHandle<()>,
         global_time: f64,
+
+        frequency_output: f64,
+        envelop: AtomicPtr<EnvelopeADSR>
     }
 
     impl Noise for NoiseMaker {
@@ -79,6 +85,8 @@ pub mod noise {
     }
 
     static mut ATOMIC_PTR: AtomicPtr<NoiseMaker> = AtomicPtr::<NoiseMaker>::new(ptr::null_mut());
+    //static mut ENVELOPE: AtomicPtr<EnvelopeADSR> = AtomicPtr::<EnvelopeADSR>::new(ptr::null_mut());
+    //static mut FREQUENCY_OUTPUT: AtomicPtr<f64> = AtomicPtr::<f64>::new(ptr::null_mut());
 
     impl NoiseMaker {
         pub fn new(args: NoiseArgs) -> Self {
@@ -102,9 +110,36 @@ pub mod noise {
                 ready: AtomicBool::new(false),
                 thread: thread::spawn(|| {}),
                 global_time: 0.0,
+
+                frequency_output: 0.0,
+                envelop: AtomicPtr::new(&mut EnvelopeADSR::new()),
             };
 
             return obj;
+        }
+
+        pub fn set_frequency_output(&mut self, frequency: f64) {
+            self.frequency_output = frequency;
+        }
+
+        pub fn get_frequency_output(&self) -> f64 {
+            return self.frequency_output;
+        }
+
+        pub fn set_envelop_note_on(&mut self) {
+            println!("Set envelop note on");
+            let val = self.envelop.load(Ordering::SeqCst);
+            unsafe {
+                (*val).set_note_on(self.get_time());
+            }
+        }
+
+        pub fn set_envelope_note_off(&mut self) {
+            println!("Set envelop note off");
+            let val = self.envelop.load(Ordering::SeqCst);
+            unsafe {
+                (*val).set_note_off(self.get_time());
+            }
         }
 
         pub unsafe fn create(&mut self, output_device: String) -> bool {
@@ -119,6 +154,7 @@ pub mod noise {
             };
 
             ATOMIC_PTR = AtomicPtr::new(self);
+            //ENVELOPE = AtomicPtr::new(&mut EnvelopeADSR::new());
 
             println!("Device id {} | devices len {}", device_id, devices.len());
             if device_id < devices.len() {
@@ -209,6 +245,40 @@ pub mod noise {
             return self.global_time;
         }
 
+        fn oscillate(&self, hertz: f64, current_time: f64, osc_type: i32) -> f64 {
+            return match osc_type {
+                0 => f64::sin(hz_to_angular(hertz) * current_time),
+                1 => if f64::sin(hz_to_angular(hertz) * current_time) > 0.0 { 1.0 } else { -1.0 },
+                2 => f64::asin(f64::sin(hz_to_angular(hertz) * current_time)) * (2.0 / PI),
+                3 => {
+                    let mut output = 0.0;
+                    for n in 1 .. 100 {
+                        output += (f64::sin(n as f64 * hz_to_angular(hertz) * current_time)) / n as f64;
+                    }
+                    return output * (2.0 / PI);
+                },
+                4 => (2.0 / PI) * (hertz * PI * (current_time % (1.0 / hertz)) - (PI / 2.0)),
+                _ => 0.0
+            }
+        }
+
+        unsafe fn default_make_noise(&self, current_time: f64) -> f64 {
+            //let output: f64 = 
+            //println!("Making noise!!");
+            return 0.5 * f64::sin(self.frequency_output * 2 as f64 * PI * current_time);
+            //println!("Freq output = {} | oscillate = {}", self.frequency_output, self.oscillate(self.frequency_output * 0.5, current_time, 3));
+            //let envelope = self.envelop.load(Ordering::SeqCst);
+            //let output = (*envelope).get_amplitude(current_time) *
+            //(
+            //    self.oscillate(self.frequency_output * 0.5, current_time, 3) + 
+            //    self.oscillate(self.frequency_output * 1.0, current_time, 1)
+            //);
+            //println!("output = {} | Freq output = {} | oscillate = {} | amplitude = {}", output, self.frequency_output, self.oscillate(self.frequency_output * 0.5, current_time, 3), 
+            //(*envelope).get_amplitude(current_time));
+            //println!("output = {}", output);
+            //return output * 0.4;
+        }
+
         pub fn main_thread(&mut self) -> () {
             println!("Main thread running...");
             self.global_time = 0.0;
@@ -221,10 +291,10 @@ pub mod noise {
             
             //println!("Time step = {}, Max sample = {}, Dmax sample = {}", time_step, max_sample, dmax_sample);
             while self.ready.load(Ordering::SeqCst) {
-                println!("main thread ready...");
+                //println!("main thread ready...");
                 // Wait for block to become available
                 if self.block_free.load(Ordering::SeqCst) == 0 {
-                    println!("Waiting for block to become available");
+                    //println!("Waiting for block to become available");
                     let mutex = Mutex::new(&self.mux_block_not_zero);
                     let started = mutex.lock().unwrap();
                     self.condition_variable.wait(started).unwrap();
@@ -237,7 +307,7 @@ pub mod noise {
                 // Prepare block for processing
                 if self.wave_headers[self.block_current as usize].dwFlags & 0x00000002 != 0
                 {
-                    println!("Waving out unprepared header");
+                    //println!("Waving out unprepared header");
                     unsafe {
                         mmeapi::waveOutUnprepareHeader(
                             self.hw_device,
@@ -260,11 +330,13 @@ pub mod noise {
                         unsafe {
                             //println!("user function is loaded");
                             let f = *self.user_function.load(Ordering::SeqCst);
-                            println!("user function is loaded 2");
-                            println!("f = {}", f as u32);
+                            //println!("user function is loaded 2");
+                            //println!("f = {}", f as u32);
+
                             //? This line triggers segfault when main loop is running with some code
-                            new_sample = (self.clip((f)(self.global_time), 1.0) * dmax_sample) as i16;
-                            println!("user function is loaded 3");
+                            //new_sample = (self.clip((f)(self.global_time), 1.0) * dmax_sample) as i16;
+                            new_sample = (self.default_make_noise(self.global_time) * dmax_sample) as i16;
+                            //println!("user function is loaded 3");
                         }
                     }
 
@@ -277,12 +349,12 @@ pub mod noise {
                 }
 
                 // Send block to sound devices
-                println!("Sending block to sound devices");
+                //println!("Sending block to sound devices");
                 unsafe {
                     mmeapi::waveOutPrepareHeader(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                     mmeapi::waveOutWrite(self.hw_device, &mut self.wave_headers[self.block_current as usize], mem::size_of::<mmsystem::WAVEHDR>() as u32);
                 }
-                println!("Blocks send");
+                //println!("Blocks send");
                 self.block_current += 1;
                 //println!("block_current = {} | new block_current = {} (block_count = {})", self.block_current, self.block_current % self.block_count, self.block_count);
                 self.block_current %= self.block_count;
@@ -374,5 +446,9 @@ pub mod noise {
 
     fn max_clip(sample: f64, max: f64) -> f64 {
         return if sample > -max { sample } else { -max };
+    }
+
+    fn hz_to_angular(hertz: f64) -> f64 {
+       return hertz * 2.0 * PI;
     }
 }

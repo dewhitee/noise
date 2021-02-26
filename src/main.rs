@@ -46,7 +46,7 @@ fn make_noise(current_time: f64) -> f64 {
     //return 0.1;
 }
 
-static mut FREQUENCY_OUTPUT: AtomicPtr<f64> = AtomicPtr::new(ptr::null_mut());
+//static mut FREQUENCY_OUTPUT: f64 = 0.0;
 static mut OCTAVE_BASE_FREQUENCY: f64 = 110.0; // A2
 static mut CURRENT_KEY: i32 = -1;
 static mut KEY_PRESSED: bool = false;
@@ -65,12 +65,14 @@ fn main() {
             println!("Found Output Device {}\n", d);
         }
     
-        let mut temporal = Box::new(100);
-        let mut sound: Box<NoiseMaker> = Box::new(NoiseMaker::new(NoiseArgs::default()));
+        //let mut temporal = Box::new(100);
+        let mut sound: NoiseMaker = NoiseMaker::new(NoiseArgs::default());
         sound.create((*devices[0]).to_string());
         sound.set_user_function(make_noise);
 
-        TWELVE_ROOT_OF_TWO = num::pow(2.0, 1 / 12);
+        //TWELVE_ROOT_OF_TWO = num::pow(2.0, 1.0 / 12.0);
+        TWELVE_ROOT_OF_TWO = 1.0594630943592952645618252949463;
+        println!("TWELVE_ROOT_OF_TWO = {}", TWELVE_ROOT_OF_TWO);
         //FREQUENCY_OUTPUT = Box::new(0.0);
 
         // iflet mut current_key: i32 = -1;
@@ -87,48 +89,36 @@ fn main() {
         //     }
         // });
 
-        loop {
-            let a = 10;
-            //println!("a = {}", a);
-        }
-
         // loop {
         //     let a = 10;
-        //     //println!("{}", a);
-        //     //let mutex = Mutex::new(0);
-        //     //mutex.lock();
-        //     //println!("temporal = {}", temporal);
-        //     for k in 0 .. 16 {
-        //         //*temporal.as_mut() = 10;
-        //         //println!("key_pressed = {}", key_pressed.load(Ordering::SeqCst));
-        //         //println!("Hi {}", k);
-        //         //println!("Frequency output = {}", *FREQUENCY_OUTPUT.load(Ordering::SeqCst));
-        //         //println!("Octave base frequency = {}", OCTAVE_BASE_FREQUENCY);
-        //         //println!("twelve root of two = {}", TWELVE_ROOT_OF_TWO);
-        //         //println!("key pressed = {}", CURRENT_KEY);
-        //         if winuser::GetAsyncKeyState(b"ZSXCFVGBNJMK\xbcL\xbe\xbf"[k] as i32) as u16 & 0x8000 != 0 {
-        //         //     println!("Key pressed");
-        //         //     if current_key != k as i32 {
-        //         //         FREQUENCY_OUTPUT = OCTAVE_BASE_FREQUENCY * num::pow(twelve_root_of_two, k);
-        //         //         envelope.set_note_on(sound.get_time());
-        //         //         println!("\rNote On : {}s {}Hz", sound.get_time(), FREQUENCY_OUTPUT);
-        //         //         current_key = k as i32;
-        //         //     }
-        //         //     key_pressed = true;
-        //         }
-        //         //let t = temporal.load(Ordering::SeqCst);
-        //         //println!("Hee");
-        //     }
-
-        //     //if !key_pressed {
-        //     //    println!("Key is not pressed");
-        //     //    if current_key != -1 {
-        //     //        println!("\rNote Off : {}s", sound.get_time());
-        //     //        envelope.set_note_off(sound.get_time());
-        //     //        current_key = -1;
-        //     //    }
-        //     //}
+        //     println!("a = {}", a);
         // }
+
+        
+
+        loop {
+            KEY_PRESSED = false;
+            for k in 0 .. 16 {
+                // White and black keys
+                if winuser::GetAsyncKeyState(b"ZSXCFVGBNJMK\xbcL\xbe\xbf"[k] as i32) as u16 & 0x8000 != 0 {
+                    if CURRENT_KEY != k as i32 {
+                        sound.set_frequency_output(OCTAVE_BASE_FREQUENCY * num::pow(TWELVE_ROOT_OF_TWO, k));
+                        sound.set_envelop_note_on();
+                        println!("\rNote On : {}s {}Hz", sound.get_time(), sound.get_frequency_output());
+                        CURRENT_KEY = k as i32;
+                    }
+                    KEY_PRESSED = true;
+                }
+            }
+
+            if !KEY_PRESSED {
+                if CURRENT_KEY != -1 {
+                    println!("\rNote Off : {}s", sound.get_time());
+                    sound.set_envelope_note_off();
+                    CURRENT_KEY = -1;
+                }
+            }
+        }
 
         println!("Out of loop");
     }
