@@ -111,6 +111,9 @@ pub mod noise {
                 Some(x) => x,
                 None => 0,
             };
+
+            let atomic_ptr: AtomicPtr<NoiseMaker> = AtomicPtr::new(self);
+
             println!("Device id {} | devices len {}", device_id, devices.len());
             if device_id < devices.len() {
                 println!("Initializing wave_format");
@@ -126,9 +129,14 @@ pub mod noise {
 
                 // Open Device if valid
                 println!("Opening device (waveOutOpen)");
-                // Self::wave_out_proc_wrapper as basetsd::DWORD_PTR
-                if mmeapi::waveOutOpen(&mut self.hw_device, device_id as u32, &wave_format, mem::zeroed(), 
-                    self as *const Self as basetsd::DWORD_PTR, mmsystem::CALLBACK_FUNCTION) != winerror::S_OK as u32
+                //let selfptr = self as *const Self as basetsd::DWORD_PTR;
+                let selfptr = atomic_ptr.load(Ordering::SeqCst) as basetsd::DWORD_PTR;
+                let callback_func_ptr = Self::wave_out_proc_wrapper as basetsd::DWORD_PTR;
+                println!("Pointer to self as basetsd::DWORD_PTR = {}", selfptr);
+                println!("Pointer to self as u32 = {}", atomic_ptr.load(Ordering::SeqCst) as u32);
+                // Self::wave_out_proc_wrapper as basetsd::DWORD_PTR triggers STATUS_ACCESS_VIOLATION
+                if mmeapi::waveOutOpen(&mut self.hw_device, device_id as u32, &wave_format, callback_func_ptr, 
+                    selfptr, mmsystem::CALLBACK_FUNCTION) != winerror::S_OK as u32
                 {
                     println!("Failed to open");
                     return self.destroy();
@@ -167,13 +175,15 @@ pub mod noise {
             //let cloned = Mutex::new(self);
             //let cloned = Arc::new(cloned);
 
-            let atomic_ptr = AtomicPtr::new(self);
+            //let atomic_ptr = AtomicPtr::new(self);
 
+            println!("atomic_ptr before thread = {}", atomic_ptr.load(Ordering::SeqCst) as basetsd::DWORD_PTR);
             //let thread_arc = cloned.clone();
             //? Starting thread
             self.thread = thread::spawn(move || {
                 println!("Main thread running!");
                 let noise = atomic_ptr.load(Ordering::SeqCst);
+                println!("atomic_ptr = {}", noise as basetsd::DWORD_PTR);
                 (*noise).main_thread();
                 println!("Thread passed");
             });
@@ -286,34 +296,37 @@ pub mod noise {
         }
 
         pub fn wave_out_proc(
-            mut self,
+            &mut self,
             wave_out: mmsystem::HWAVEOUT,
             msg: u32,
             dw_param1: minwindef::DWORD,
             dw_param2: minwindef::DWORD,
         ) {
             println!("Wave out proc");
+            //? NOW STATUS ACCESS VIOLATION IS HERE
             if msg != mmsystem::WOM_DONE {
                 return;
             }
 
             *self.block_free.get_mut() += 1;
-            let mutex = Mutex::new(self.mux_block_not_zero);
+            let mutex = Mutex::new(&self.mux_block_not_zero);
             let _started = mutex.lock().unwrap();
             self.condition_variable.notify_one();
             //self.condition_variable
             //    .touch(condition_variable::Notify::One);
         }
 
-        unsafe fn wave_out_proc_wrapper(
+        unsafe extern "stdcall" fn wave_out_proc_wrapper(
             wave_out: mmsystem::HWAVEOUT,
             msg: u32,
             dw_instance: minwindef::DWORD,
             dw_param1: minwindef::DWORD,
             dw_param2: minwindef::DWORD,
         ) {
-            println!("Wave out process wrapper");
-            (std::ptr::read(dw_instance as *mut NoiseMaker)).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
+            println!("Wave out process wrapper | wave_out = {} | msg = {} | dw_instance = {} | dw_param1 = {} | dw_param2 = {}", wave_out as u32, msg, dw_instance, 
+            dw_param1 as u32, dw_param2 as u32);
+            let dw_instance_ptr: *mut NoiseMaker = dw_instance as *mut NoiseMaker;
+            (*dw_instance_ptr).wave_out_proc(wave_out, msg, dw_param1, dw_param2);
         }
 
         pub unsafe fn enumerate() -> Vec<String> {
